@@ -507,8 +507,9 @@ sys_arch_netconn_sem_alloc(void)
   if(ret == NULL) {
     sys_sem_t *sem;
     err_t err;
-    /* need to allocate the memory for this semaphore */
-    sem = mem_malloc(sizeof(sys_sem_t));
+    /* Allocate from FreeRTOS heap — lwIP heap may be exhausted or
+       not yet initialized when this is called during early startup. */
+    sem = pvPortMalloc(sizeof(sys_sem_t));
     LWIP_ASSERT("sem != NULL", sem != NULL);
     err = sys_sem_new(sem, 0);
     LWIP_ASSERT("err == ERR_OK", err == ERR_OK);
@@ -527,7 +528,7 @@ void sys_arch_netconn_sem_free(void)
   if(ret != NULL) {
     sys_sem_t *sem = ret;
     sys_sem_free(sem);
-    mem_free(sem);
+    vPortFree(sem);
     vTaskSetThreadLocalStoragePointer(task, 0, NULL);
   }
 }
