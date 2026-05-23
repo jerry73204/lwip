@@ -493,6 +493,18 @@ sys_arch_netconn_sem_get(void)
   LWIP_ASSERT("task != NULL", task != NULL);
 
   ret = pvTaskGetThreadLocalStoragePointer(task, 0);
+  if (ret == NULL) {
+    sys_sem_t *sem;
+    err_t err;
+
+    sem = pvPortMalloc(sizeof(sys_sem_t));
+    LWIP_ASSERT("sem != NULL", sem != NULL);
+    err = sys_sem_new(sem, 0);
+    LWIP_ASSERT("err == ERR_OK", err == ERR_OK);
+    LWIP_ASSERT("sem invalid", sys_sem_valid(sem));
+    vTaskSetThreadLocalStoragePointer(task, 0, sem);
+    ret = sem;
+  }
   return ret;
 }
 
