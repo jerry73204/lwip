@@ -322,6 +322,10 @@ static volatile int select_cb_ctr;
 static struct lwip_select_cb *select_cb_list;
 #endif /* LWIP_SOCKET_SELECT || LWIP_SOCKET_POLL */
 
+#if LWIP_SOCKET_RX_NOTIFY && !(LWIP_SOCKET_SELECT || LWIP_SOCKET_POLL)
+#error "LWIP_SOCKET_RX_NOTIFY requires LWIP_SOCKET_SELECT or LWIP_SOCKET_POLL"
+#endif
+
 /* Forward declaration of some functions */
 #if LWIP_SOCKET_SELECT || LWIP_SOCKET_POLL
 static void event_callback(struct netconn *conn, enum netconn_evt evt, u16_t len);
@@ -569,6 +573,10 @@ alloc_socket(struct netconn *newconn, int accepted)
       sockets[i].sendevent  = (NETCONNTYPE_GROUP(newconn->type) == NETCONN_TCP ? (accepted != 0) : 1);
       sockets[i].errevent   = 0;
 #endif /* LWIP_SOCKET_SELECT || LWIP_SOCKET_POLL */
+#if LWIP_SOCKET_RX_NOTIFY
+      sockets[i].rx_notify     = NULL;
+      sockets[i].rx_notify_arg = NULL;
+#endif /* LWIP_SOCKET_RX_NOTIFY */
       return i + LWIP_SOCKET_OFFSET;
     }
     SYS_ARCH_UNPROTECT(lev);
@@ -602,6 +610,10 @@ free_socket_locked(struct lwip_sock *sock, int is_tcp, struct netconn **conn,
   sock->lastdata.pbuf = NULL;
   *conn = sock->conn;
   sock->conn = NULL;
+#if LWIP_SOCKET_RX_NOTIFY
+  sock->rx_notify     = NULL;
+  sock->rx_notify_arg = NULL;
+#endif /* LWIP_SOCKET_RX_NOTIFY */
   return 1;
 }
 
@@ -2525,6 +2537,10 @@ event_callback(struct netconn *conn, enum netconn_evt evt, u16_t len)
 {
   int s, check_waiters;
   struct lwip_sock *sock;
+#if LWIP_SOCKET_RX_NOTIFY
+  lwip_socket_rx_notify_fn rx_notify;
+  void *rx_notify_arg;
+#endif /* LWIP_SOCKET_RX_NOTIFY */
   SYS_ARCH_DECL_PROTECT(lev);
 
   LWIP_UNUSED_ARG(len);
@@ -2561,7 +2577,19 @@ event_callback(struct netconn *conn, enum netconn_evt evt, u16_t len)
   }
 
   check_waiters = 1;
+#if LWIP_SOCKET_RX_NOTIFY
+  rx_notify = NULL;
+  rx_notify_arg = NULL;
+#endif /* LWIP_SOCKET_RX_NOTIFY */
   SYS_ARCH_PROTECT(lev);
+#if LWIP_SOCKET_RX_NOTIFY
+  /* Every arrival, not only the first edge: the receiver may drain less than
+     everything queued, and a notify per datagram is only a signal. */
+  if ((evt == NETCONN_EVT_RCVPLUS) || (evt == NETCONN_EVT_ERROR)) {
+    rx_notify = sock->rx_notify;
+    rx_notify_arg = sock->rx_notify_arg;
+  }
+#endif /* LWIP_SOCKET_RX_NOTIFY */
   /* Set event as required */
   switch (evt) {
     case NETCONN_EVT_RCVPLUS:
@@ -2604,6 +2632,12 @@ event_callback(struct netconn *conn, enum netconn_evt evt, u16_t len)
   } else {
     SYS_ARCH_UNPROTECT(lev);
   }
+#if LWIP_SOCKET_RX_NOTIFY
+  /* Called outside the protection: it signals the application's scheduler. */
+  if (rx_notify != NULL) {
+    rx_notify(rx_notify_arg);
+  }
+#endif /* LWIP_SOCKET_RX_NOTIFY */
   done_socket(sock);
 }
 
@@ -3910,6 +3944,69 @@ lwip_ioctl(int s, long cmd, void *argp)
   done_socket(sock);
   return -1;
 }
+
+#if LWIP_SOCKET_RX_NOTIFY
+struct lwip_rx_notify_data {
+  struct tcpip_api_call_data call;
+  struct lwip_sock *sock;
+  lwip_socket_rx_notify_fn fn;
+  void *arg;
+  int pending;
+};
+
+/* Runs in the tcpip thread (or under the core lock), where event_callback()
+   runs for every receive, so no callback already read from the socket can
+   still be in flight once this returns. */
+static err_t
+lwip_socket_set_rx_notify_fn(struct tcpip_api_call_data *call)
+{
+  struct lwip_rx_notify_data *d = (struct lwip_rx_notify_data *)call;
+  SYS_ARCH_DECL_PROTECT(lev);
+
+  SYS_ARCH_PROTECT(lev);
+  d->sock->rx_notify = d->fn;
+  d->sock->rx_notify_arg = d->arg;
+  d->pending = (d->sock->rcvevent > 0) || (d->sock->errevent != 0) ||
+               (d->sock->lastdata.pbuf != NULL);
+  SYS_ARCH_UNPROTECT(lev);
+  return ERR_OK;
+}
+
+/**
+ * Install (fn != NULL) or remove (fn == NULL) the socket's receive
+ * notification. fn(arg) is then called each time data or an error arrives on
+ * socket s, from the context that delivers it (the tcpip thread), so it must
+ * only signal. If data is already queued when fn is installed, fn is called
+ * once before this returns, so no arrival is lost to the install. After a
+ * removal returns, the previous fn is never called again.
+ *
+ * @return 0 on success, -1 (errno set) if s is not a valid socket
+ */
+int
+lwip_socket_set_rx_notify(int s, lwip_socket_rx_notify_fn fn, void *arg)
+{
+  struct lwip_rx_notify_data d;
+  err_t err;
+
+  d.sock = get_socket(s);
+  if (!d.sock) {
+    return -1;
+  }
+  d.fn = fn;
+  d.arg = arg;
+  d.pending = 0;
+  err = tcpip_api_call(lwip_socket_set_rx_notify_fn, &d.call);
+  if ((err == ERR_OK) && (fn != NULL) && d.pending) {
+    fn(arg);
+  }
+  done_socket(d.sock);
+  if (err != ERR_OK) {
+    set_errno(err_to_errno(err));
+    return -1;
+  }
+  return 0;
+}
+#endif /* LWIP_SOCKET_RX_NOTIFY */
 
 /** A minimal implementation of fcntl.
  * Currently only the commands F_GETFL and F_SETFL are implemented.

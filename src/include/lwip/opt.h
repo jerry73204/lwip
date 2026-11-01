@@ -2175,6 +2175,19 @@
 #if !defined LWIP_SOCKET_POLL || defined __DOXYGEN__
 #define LWIP_SOCKET_POLL                1
 #endif
+
+/**
+ * LWIP_SOCKET_RX_NOTIFY==1: enable lwip_socket_set_rx_notify(), a per-socket
+ * callback invoked from the netconn event callback each time data (or an
+ * error) arrives on the socket. Lets an application's own scheduler wait on
+ * its own wake object instead of blocking in recv()/select(). The callback
+ * runs in the tcpip thread (or with the core lock held), so it must only
+ * signal: never call back into the stack. Requires LWIP_SOCKET_SELECT or
+ * LWIP_SOCKET_POLL, which provide the event callback it hooks.
+ */
+#if !defined LWIP_SOCKET_RX_NOTIFY || defined __DOXYGEN__
+#define LWIP_SOCKET_RX_NOTIFY           0
+#endif
 /**
  * @}
  */

@@ -548,6 +548,13 @@ extern "C" {
 void lwip_socket_thread_init(void); /* LWIP_NETCONN_SEM_PER_THREAD==1: initialize thread-local semaphore */
 void lwip_socket_thread_cleanup(void); /* LWIP_NETCONN_SEM_PER_THREAD==1: destroy thread-local semaphore */
 
+#if LWIP_SOCKET_RX_NOTIFY
+/** Receive notification: called with the argument given to
+ * lwip_socket_set_rx_notify() each time data or an error arrives. */
+typedef void (*lwip_socket_rx_notify_fn)(void *arg);
+int lwip_socket_set_rx_notify(int s, lwip_socket_rx_notify_fn fn, void *arg);
+#endif /* LWIP_SOCKET_RX_NOTIFY */
+
 #if LWIP_COMPAT_SOCKETS == 2
 /* This helps code parsers/code completion by not having the COMPAT functions as defines */
 #define lwip_accept       accept

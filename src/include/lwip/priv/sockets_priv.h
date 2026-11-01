@@ -81,6 +81,12 @@ struct lwip_sock {
   /** counter of how many threads are waiting for this socket using select */
   SELWAIT_T select_waiting;
 #endif /* LWIP_SOCKET_SELECT || LWIP_SOCKET_POLL */
+#if LWIP_SOCKET_RX_NOTIFY
+  /** receive notification installed by lwip_socket_set_rx_notify(),
+      invoked by event_callback() on every receive/error event */
+  lwip_socket_rx_notify_fn rx_notify;
+  void *rx_notify_arg;
+#endif /* LWIP_SOCKET_RX_NOTIFY */
 #if LWIP_NETCONN_FULLDUPLEX
   /* counter of how many threads are using a struct lwip_sock (not the 'int') */
   u8_t fd_used;
